@@ -1,0 +1,9 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "identifier": "top.itmeng.jieqilink",
+    "bundle": {
+        "resources": [
+            "../libs/pikajieqi/pikajieqi.nnue"
+        ]
+    }
+}

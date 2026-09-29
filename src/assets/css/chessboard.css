@@ -1,0 +1,186 @@
+#chessboard,
+#practiceboard {
+    width: 360px;
+    /* 棋盘图片的宽度 */
+    height: 400px;
+    /* 棋盘图片的高度 */
+    padding: 10px;
+    background-image: url('/src/assets/images/board.png'), url("/src/assets/images/bg.jpg");
+    background-size: 100%;
+    background-attachment: scroll;
+    background-repeat: no-repeat;
+    position: absolute;
+    /* 用于定位棋子 */
+    top: 104px;
+    left: 12px;
+    z-index: 10;
+    box-sizing: content-box;
+    text-decoration: none;
+    display: block;
+    text-decoration-style: solid;
+}
+
+/* 推演盘位于观看页右侧(推演模式窗口加宽后并排显示) */
+#practiceboard {
+    left: 672px;
+}
+
+.piece-wrap {
+    background-attachment: scroll;
+    background-clip: border-box;
+    background-color: rgba(0, 0, 0, 0);
+    background-origin: padding-box;
+    /* background-repeat: no-repeat; */
+    cursor: pointer;
+    box-sizing: content-box;
+    display: block;
+    float: left;
+    list-style-image: none;
+    list-style-position: outside;
+    list-style-type: none;
+    outline-color: rgba(0, 0, 0, 0);
+    outline-style: none;
+    width: 40px;
+    /* 棋子的宽度 */
+    height: 40px;
+    /* 棋子的高度 */
+    position: relative;
+    /* 用于在棋盘上定位 */
+    background-size: 100%;
+    /* 确保棋子图片覆盖整个元素区域 */
+    text-decoration: none;
+    z-index: 0;
+}
+
+.piece {
+    background-attachment: scroll;
+    background-clip: border-box;
+    background-color: rgba(0, 0, 0, 0);
+    background-origin: padding-box;
+    /* background-repeat: no-repeat; */
+    cursor: pointer;
+    box-sizing: content-box;
+    display: block;
+    float: left;
+    list-style-image: none;
+    list-style-position: outside;
+    list-style-type: none;
+    outline-color: rgba(0, 0, 0, 0);
+    outline-style: none;
+    width: 40px;
+    /* 棋子的宽度 */
+    height: 40px;
+    /* 棋子的高度 */
+    position: relative;
+    /* 用于在棋盘上定位 */
+    background-size: 100%;
+    /* 确保棋子图片覆盖整个元素区域 */
+    text-decoration: none;
+    z-index: 1;
+}
+
+.b-select {
+    box-shadow: 0 0 0 3px #e74c3c;
+    background-color: rgba(231, 76, 60, 0.25);
+    z-index: 2;
+}
+
+.r-select {
+    box-shadow: 0 0 0 3px #3498db;
+    background-color: rgba(52, 152, 219, 0.25);
+    z-index: 2;
+}
+
+.alt-select {
+    box-shadow: 0 0 0 2px #9b59b6;
+    z-index: 2;
+}
+
+/* 推演盘: 选中棋子与合法落点 */
+.sel-select {
+    box-shadow: 0 0 0 3px #f39c12;
+    background-color: rgba(243, 156, 18, 0.3);
+    z-index: 2;
+}
+
+.mv-select {
+    box-shadow: inset 0 0 0 2px rgba(46, 204, 113, 0.55);
+    background-color: rgba(46, 204, 113, 0.08);
+    z-index: 2;
+}
+
+.piece-R {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 640px;
+}
+
+.piece-N {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 600px;
+}
+
+.piece-B {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 560px;
+}
+
+.piece-A {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 520px;
+}
+
+.piece-K {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 480px;
+}
+
+.piece-C {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 440px;
+}
+
+.piece-P {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 400px;
+}
+
+.piece-p {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 120px;
+}
+
+.piece-c {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 160px;
+}
+
+.piece-k {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 200px;
+}
+
+.piece-a {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 240px;
+}
+
+.piece-b {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 280px;
+}
+
+.piece-n {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 320px;
+}
+
+.piece-r {
+    background-image: url("/src/assets/images/piece.png");
+    background-position-y: 360px;
+}
+
+/* 揭棋暗子(未翻开): 红方 X / 黑方 x 共用背面图案 */
+.piece-X,
+.piece-x {
+    background-image: url("/src/assets/images/dark_piece.svg");
+}

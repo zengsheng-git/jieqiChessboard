@@ -1,0 +1,11 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "identifier": "top.itmeng.jieqilink",
+    "bundle": {
+        "targets": "deb",
+        "resources": {
+            "../libs/pikajieqi/pikajieqi.nnue": "../libs/pikajieqi/pikajieqi.nnue",
+            "../libs/linux/libonnxruntime*.so": "./"
+        }
+    }
+}

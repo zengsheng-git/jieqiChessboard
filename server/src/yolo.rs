@@ -80,16 +80,17 @@ pub fn predict(origin_img: ImageBuffer<Rgba<u8>, Vec<u8>>) -> ort::Result<Vec<De
         input[[0, 2, y as usize, x as usize]] = b as f32 / 255.0;
     }
     let outputs = session().run(inputs!["images" => input.view()]?)?;
-    let output = outputs["output"].try_extract_tensor::<f32>()?.view().t().slice(s![.., .., 0]).t().to_owned();
+    let raw = outputs["output0"].try_extract_tensor::<f32>()?;
+    let output = raw.view().t().slice(s![.., .., 0]).to_owned();
 
     let mut detections = output
         .rows()
         .into_iter()
         .filter_map(|row| {
             let (class_id, max_prob) =
-                (5..39).map(|idx| (idx - 5, row[idx])).max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap();
+                (4..38).map(|idx| (idx - 4, row[idx])).max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap()).unwrap();
 
-            let conf = row[4] * max_prob;
+            let conf = max_prob;
             if conf < CONFIDENCE_THRESHOLD {
                 None
             } else {
@@ -115,6 +116,12 @@ pub struct Detection {
 }
 
 impl Detection {
+    // 仅测试用: 按左上/右下角直接构造
+    #[cfg(test)]
+    pub(crate) fn of(label: char, x0: f32, y0: f32, x1: f32, y1: f32) -> Self {
+        Self { x0, x1, y0, y1, confidence: 0.99, label, idx: 0, area: (x1 - x0) * (y1 - y0) }
+    }
+
     fn new(x: f32, y: f32, w: f32, h: f32, idx: usize, confidence: f32) -> Self {
         Self {
             x0: x - w / 2.0,
@@ -153,4 +160,24 @@ fn nms(detections: &mut Vec<Detection>) -> Vec<Detection> {
         detections.retain(|detection| current.iou(detection) < IOU_THRESHOLD);
     }
     filtered_detections
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn print_output_layout() {
+        let input = Array::<f32, _>::zeros((1, 3, IMAGE_WIDTH, IMAGE_HEIGHT));
+        let outputs = session().run(inputs!["images" => input.view()].unwrap()).unwrap();
+        for (name, value) in outputs.iter() {
+            match value.try_extract_tensor::<f32>() {
+                Ok(t) => println!("output {:?} shape={:?}", name, t.shape()),
+                Err(err) => println!("output {:?} extract failed: {}", name, err),
+            }
+        }
+        let img = ImageBuffer::from_pixel(920, 561, Rgba([128, 128, 128, 255]));
+        let detections = predict(img).unwrap();
+        println!("predict detections={}", detections.len());
+    }
 }

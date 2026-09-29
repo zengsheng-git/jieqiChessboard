@@ -444,6 +444,21 @@ fn process_analysis_loop(mut context: AnalysisContext) {
     }
 }
 
+fn dump_capture_debug(image: &ImageBuffer<Rgba<u8>, Vec<u8>>, detections: &[crate::yolo::Detection]) {
+    let path = std::env::current_dir().unwrap_or_default().join("debug_capture.png");
+    match image.save(&path) {
+        Ok(()) => warn!("dumped capture to {}", path.display()),
+        Err(err) => warn!("dump capture failed: {}", err),
+    }
+    let mut stats: std::collections::BTreeMap<char, (usize, f32)> = std::collections::BTreeMap::new();
+    for det in detections {
+        let entry = stats.entry(det.label).or_insert((0, 0.0));
+        entry.0 += 1;
+        entry.1 = entry.1.max(det.confidence);
+    }
+    warn!("detections total={}, per-label (count,max_conf)={:?}", detections.len(), stats);
+}
+
 // 初始化Tauri的command处理
 #[tauri::command]
 pub async fn start_listen(app: AppHandle, target: Window) -> Result<(), String> {
@@ -468,13 +483,14 @@ pub async fn start_listen(app: AppHandle, target: Window) -> Result<(), String> 
         let image_h = image.height();
         let image_w = image.width();
 
-        let detections = predict(image).unwrap();
+        let detections = predict(image.clone()).unwrap();
 
         match common::detections_bound(image_w, image_h, &detections) {
             Ok((x, y, w, h)) => {
                 window.set_sub_bound(x, y, w, h); // 设置窗口边界
             }
             Err(e) => {
+                dump_capture_debug(&image, &detections);
                 return Err(e); // 未识别到棋盘
             }
         }

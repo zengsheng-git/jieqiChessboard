@@ -35,3 +35,6 @@ __pycache__
 !libs/windows-cpu/*.dll
 # GPU 运行库体积超 GitHub 100MB 限制（cuda dll 300MB+），不入库，按 product.md 说明自行下载解压
 libs/windows-gpu/
+
+# 识别失败时 worker dump 的调试截图
+server/debug_capture.png

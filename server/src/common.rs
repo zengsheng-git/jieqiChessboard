@@ -71,7 +71,6 @@ const MODEL_CELL_H: f32 = yolo::IMAGE_HEIGHT as f32 / 10.0;
 
 // detections_to_board 识别结果转换为棋盘结构
 pub fn detections_to_board(detections: &[yolo::Detection]) -> Result<(chess::Camp, [[char; 9]; 10]), String> {
-    let mut camp = chess::Camp::None;
     let mut board = [[' '; 9]; 10];
 
     // 只取棋子类标签: '0' 为棋盘框, ' ' 为边框数字标记等非棋子检测
@@ -92,25 +91,55 @@ pub fn detections_to_board(detections: &[yolo::Detection]) -> Result<(chess::Cam
             continue;
         }
 
-        // 构建board: 未辨方暗子按半场归类(下半=红X/上半=黑x, 与前端规则一致)
-        let label = if det.label == 'D' {
-            if row >= 5 { 'X' } else { 'x' }
-        } else {
-            det.label
-        };
-        board[row][col] = label;
+        board[row][col] = det.label;
+    }
+    if !found {
+        return Err("not board".to_string());
+    }
 
-        // 判断阵营
-        if camp == chess::Camp::None && (3..=5).contains(&col) && row >= 7 {
+    // 判断阵营: 将帅始终明置且不出己方半场,
+    // 屏幕下半场(rows 5-9)自下而上找到的将帅颜色即视角阵营
+    let mut camp = chess::Camp::None;
+    for row in (5..=9).rev() {
+        for &label in board[row].iter() {
             match label {
                 'k' => camp = chess::Camp::Black,
                 'K' => camp = chess::Camp::Red,
                 _ => {}
             }
         }
+        if camp != chess::Camp::None {
+            break;
+        }
     }
-    if !found {
-        return Err("not board".to_string());
+    // 下半场将帅漏检时用上半场兜底, 颜色取反
+    if camp == chess::Camp::None {
+        for row in (0..=4).rev() {
+            for &label in board[row].iter() {
+                match label {
+                    'k' => camp = chess::Camp::Red,
+                    'K' => camp = chess::Camp::Black,
+                    _ => {}
+                }
+            }
+            if camp != chess::Camp::None {
+                break;
+            }
+        }
+    }
+    if camp == chess::Camp::None {
+        return Err("未识别到将帅".to_string());
+    }
+
+    // 未辨方暗子按所属半场归类(下半场=视角方, 与前端规则一致):
+    // camp=Red 时下半暗子标红X, camp=Black 时下半暗子标黑x
+    for row in 0..10 {
+        for cell in board[row].iter_mut() {
+            if *cell == 'D' {
+                let red = if row >= 5 { camp == chess::Camp::Red } else { camp == chess::Camp::Black };
+                *cell = if red { 'X' } else { 'x' };
+            }
+        }
     }
     Ok((camp, board))
 }

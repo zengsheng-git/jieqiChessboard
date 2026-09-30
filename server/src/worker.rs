@@ -52,6 +52,7 @@ struct AnalysisContext {
     pending_deviation: Option<chess::Camp>, // 刚发生非预期走子的一方, 下次分析时计算代价
     invalid_change_count: usize,
     last_hint_version: u32, // 上次分析时的提示档位版本号, 用于检测切档后立即重算
+    account: chess::PieceAccount, // 子力账目: 双方被吃棋子与未翻暗子池
 }
 
 unsafe impl Send for AnalysisContext {}
@@ -71,6 +72,7 @@ impl AnalysisContext {
             pending_deviation: None,
             invalid_change_count: 0,
             last_hint_version: crate::hint_version(),
+            account: chess::PieceAccount::default(),
         }
     }
 
@@ -92,7 +94,9 @@ impl AnalysisContext {
 
     // 分析棋盘并返回结果
     fn analyze_board(&mut self, camp: &chess::Camp, board: [[char; 9]; 10]) -> Option<BoardAnalysisResult> {
-        let fen = chess::board_fen(camp, board);
+        // 池按当前盘面刷新后再生成 FEN, 保证被吃暗子已从未翻池扣除
+        self.account.refresh_pool(board);
+        let fen = chess::board_fen_account(camp, board, &self.account);
         // 先克隆配置再释放读锁: 搜索可能耗时数秒(云库超时+引擎),
         // 期间不能阻塞设置界面的配置写入命令, 否则改参数/切档位会卡住
         let engine_config = {
@@ -113,7 +117,7 @@ impl AnalysisContext {
 
         let result = result.unwrap();
         let score = result.score;
-        let (expect_move, expect_board) = analyse(&self.app, result, board, camp, prev)?;
+        let (expect_move, expect_board) = analyse(&self.app, result, board, camp, prev, self.account.clone())?;
         // 记录本次预期评分与行棋方, 供下一步偏离对比
         self.expect_score = score;
         self.expect_camp = camp.clone();
@@ -154,6 +158,10 @@ impl AnalysisContext {
     // 处理一次走棋：更新UI、分析下一行动方并返回新状态
     fn handle_move_and_next(&mut self, changed: &chess::Changed, board: [[char; 9]; 10], camp: &chess::Camp) -> ChessboardState {
         self.last_board = board;
+        // 记录本步吃子, 更新子力账目
+        if let Some(captured) = changed.captured {
+            self.account.record(captured);
+        }
         self.handle_move(changed);
         // 本步为非预期走子(与引擎预测不符), 下次分析时计算偏离代价
         self.pending_deviation = Some(changed.camp.clone());
@@ -193,6 +201,7 @@ pub fn get_board(image: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Option<(chess::Camp, 
 // 将引擎结果整理为完整展示数据(中文主线/次优/局面/偏离等), 镜像与推演共用
 pub fn prepare_result(
     mut result: QueryResult, board: [[char; 9]; 10], camp: &chess::Camp, prev: Option<(chess::Camp, isize)>,
+    mut account: chess::PieceAccount,
 ) -> Option<(QueryResult, chess::Changed, [[char; 9]; 10])> {
     // 引擎可能返回空着法, 跳过本次展示, 避免监听线程 panic
     let Some(best_pv) = result.pvs.first().cloned() else {
@@ -225,11 +234,14 @@ pub fn prepare_result(
     }
     // 标记本次分析的行棋方阵营
     result.camp = camp.to_char();
+    // 携带子力账目(按当前盘面刷新未翻池, 保证与局面一致)
+    account.refresh_pool(board);
+    result.account = account;
     Some((result, expect_move, expect_board))
 }
 
-pub fn analyse(app: &AppHandle, result: QueryResult, board: [[char; 9]; 10], camp: &chess::Camp, prev: Option<(chess::Camp, isize)>) -> Option<(chess::Changed, [[char; 9]; 10])> {
-    let (result, expect_move, expect_board) = prepare_result(result, board, camp, prev)?;
+pub fn analyse(app: &AppHandle, result: QueryResult, board: [[char; 9]; 10], camp: &chess::Camp, prev: Option<(chess::Camp, isize)>, account: chess::PieceAccount) -> Option<(chess::Changed, [[char; 9]; 10])> {
+    let (result, expect_move, expect_board) = prepare_result(result, board, camp, prev, account)?;
     // 把结果发送给前端
     info!("分析结果 {:?}", result);
     app.emit("analyse", result).unwrap();
@@ -345,6 +357,8 @@ fn process_analysis_loop(mut context: AnalysisContext) {
                                 debug!("棋局变化未知，重置上下文");
                                 context.update_ui(&camp, board);
                                 context.last_board = board;
+                                // 棋局失联后事件账目不可信, 清空回到减法反推
+                                context.account = chess::PieceAccount::default();
                                 ChessboardState::Initial
                             }
                         }
@@ -400,6 +414,14 @@ fn process_analysis_loop(mut context: AnalysisContext) {
                     debug!("棋盘为预期棋盘，分析下一行动方");
                     let expect_move = context.expect_move.clone();
                     let expect_board = context.expect_board;
+                    // 预期着法成真同样可能吃子: 按走子前盘面的落点记录(原地翻子不算)
+                    let pre_board = context.last_board;
+                    let to_cell = &expect_move.to[..expect_move.to.len().min(2)];
+                    if to_cell != expect_move.from
+                        && let Some(captured) = chess::piece_at(pre_board, to_cell)
+                    {
+                        context.account.record(captured);
+                    }
                     context.last_board = expect_board;
                     context.handle_move(&expect_move);
                     context.analyze_and_set_state(expect_move.camp.opposite(), expect_board, &camp)
@@ -430,6 +452,8 @@ fn process_analysis_loop(mut context: AnalysisContext) {
                                 debug!("棋局变化未知，重置上下文");
                                 context.update_ui(&camp, board);
                                 context.last_board = board;
+                                // 棋局失联后事件账目不可信, 清空回到减法反推
+                                context.account = chess::PieceAccount::default();
                                 ChessboardState::Initial
                             }
                         }

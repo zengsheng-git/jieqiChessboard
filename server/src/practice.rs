@@ -157,7 +157,7 @@ pub async fn practice_analyze() -> Result<QueryResult, String> {
     })
     .await
     .map_err(|e| format!("分析任务失败: {e}"))??;
-    match prepare_result(result, board, &camp, None) {
+    match prepare_result(result, board, &camp, None, chess::PieceAccount::default()) {
         Some((result, _, _)) => Ok(result),
         None => Err("分析结果缺少着法".to_string()),
     }

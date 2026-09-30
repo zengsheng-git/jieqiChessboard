@@ -117,6 +117,7 @@ pub struct Changed {
     pub camp: Camp,
     pub from: String,
     pub to: String,
+    pub captured: Option<char>, // 被吃子: None=未吃子, X/x=未翻暗子被吃(类型未知), 其余=被吃明子
 }
 
 impl Changed {
@@ -126,7 +127,13 @@ impl Changed {
         let from_x = cs.next().unwrap() as usize - 97;
         let from_y = 57 - cs.next().unwrap() as usize;
         let piece = board[from_y][from_x];
-        Self { piece, camp: Camp::from_piece(piece), from: from.to_string(), to: to.to_string() }
+        Self {
+            piece,
+            camp: Camp::from_piece(piece),
+            from: from.to_string(),
+            to: to.to_string(),
+            captured: None,
+        }
     }
 }
 
@@ -135,6 +142,8 @@ pub fn board_diff(old_board: [[char; 9]; 10], board: [[char; 9]; 10]) -> (Change
     let mut changed = Changed::default();
     let mut count = 0;
     let mut flipped = false;
+    let mut old_to = ' '; // 落点格原有棋子, 用于判定吃子
+    let mut to_new = ' '; // 落点格新棋子, 走子后即为最终形态(暗子吃子强制翻开)
     for y in 0..10 {
         for x in 0..9 {
             if old_board[y][x] != board[y][x] {
@@ -147,12 +156,13 @@ pub fn board_diff(old_board: [[char; 9]; 10], board: [[char; 9]; 10]) -> (Change
                     }
                     new_piece => {
                         changed.to = BOARD_MAP[y][x].to_string();
+                        old_to = old_board[y][x];
+                        to_new = new_piece;
                         // 暗子翻转为明子: 记为翻子变化
                         if old_board[y][x] == 'X' || old_board[y][x] == 'x' {
                             flipped = true;
                             changed.piece = new_piece;
                             changed.camp = Camp::from_piece(new_piece);
-                            changed.from = BOARD_MAP[y][x].to_string();
                         }
                     }
                 }
@@ -163,6 +173,8 @@ pub fn board_diff(old_board: [[char; 9]; 10], board: [[char; 9]; 10]) -> (Change
     match count {
         1 => {
             if flipped {
+                // 原地翻子: 起终点为同一格
+                changed.from = changed.to.clone();
                 (changed, BoardChangeState::Flip)
             } else {
                 (changed, BoardChangeState::One)
@@ -172,6 +184,13 @@ pub fn board_diff(old_board: [[char; 9]; 10], board: [[char; 9]; 10]) -> (Change
             if changed.from.is_empty() || changed.to.is_empty() {
                 (changed, BoardChangeState::One)
             } else {
+                // 走子且落点原有棋子即为被吃子(X/x 为未翻暗子)
+                if old_to != ' ' {
+                    changed.captured = Some(old_to);
+                }
+                // 落点棋子即走子后的最终形态, 保证吃子翻子时前端按翻开后的类型落子
+                changed.piece = to_new;
+                changed.camp = Camp::from_piece(to_new);
                 (changed, BoardChangeState::Move)
             }
         }
@@ -213,41 +232,110 @@ pub fn board_move(board: [[char; 9]; 10], iccs: &str) -> [[char; 9]; 10] {
     new_board
 }
 
-// 未翻开暗子池: 初始配置减去棋盘上已翻明的棋子
+// 未翻暗子池的兵种顺序与初始数量
 // 顺序与 Pikafish jieqi StartFEN 一致: 红方 RACPNB 在前, 黑方 racpnb 在后, 数量为 0 省略
-fn hidden_pool(board: [[char; 9]; 10]) -> String {
-    const ORDER: [char; 6] = ['R', 'A', 'C', 'P', 'N', 'B'];
-    const INIT: [usize; 6] = [2, 2, 2, 5, 2, 2];
-    let mut on_board = [0usize; 12];
-    for row in &board {
-        for &piece in row {
-            if let Some(i) = ORDER.iter().position(|&u| u == piece) {
-                on_board[i] += 1;
-            } else if let Some(i) = ORDER.iter().position(|&u| u.to_ascii_lowercase() == piece) {
-                on_board[i + 6] += 1;
+const POOL_ORDER: [char; 6] = ['R', 'A', 'C', 'P', 'N', 'B'];
+const POOL_INIT: [usize; 6] = [2, 2, 2, 5, 2, 2];
+
+// 子力账目: 跟踪双方被吃棋子与未翻开的暗子池
+#[derive(Debug, Default, Clone, Serialize, PartialEq, Eq)]
+pub struct PieceAccount {
+    pub captured_red: Vec<char>,   // 红方被吃的明子
+    pub captured_black: Vec<char>, // 黑方被吃的明子
+    pub red_hidden_lost: usize,    // 红方未翻即被吃的暗子数(类型未知)
+    pub black_hidden_lost: usize,  // 黑方未翻即被吃的暗子数(类型未知)
+    pub pool_red: Vec<(char, usize)>,   // 红方未翻暗子池(已扣除暗损)
+    pub pool_black: Vec<(char, usize)>, // 黑方未翻暗子池
+}
+
+impl PieceAccount {
+    // 记录一颗被吃子: X/x 为未翻暗子(类型未知), 其余按明子记账
+    pub fn record(&mut self, captured: char) {
+        match captured {
+            'X' => self.red_hidden_lost += 1,
+            'x' => self.black_hidden_lost += 1,
+            p if p.is_ascii_uppercase() => self.captured_red.push(p),
+            p => self.captured_black.push(p),
+        }
+    }
+
+    // 未翻暗子池 = 初始配置 - 盘上已翻明子 - 未翻即被吃的暗子
+    pub fn refresh_pool(&mut self, board: [[char; 9]; 10]) {
+        let mut red = POOL_INIT;
+        let mut black = POOL_INIT;
+        for row in &board {
+            for &piece in row {
+                if let Some(i) = POOL_ORDER.iter().position(|&u| u == piece) {
+                    red[i] = red[i].saturating_sub(1);
+                } else if let Some(i) = POOL_ORDER.iter().position(|&u| u.to_ascii_lowercase() == piece) {
+                    black[i] = black[i].saturating_sub(1);
+                }
             }
         }
+        deduct_pool(&mut red, self.red_hidden_lost);
+        deduct_pool(&mut black, self.black_hidden_lost);
+        self.pool_red = POOL_ORDER.into_iter().zip(red).filter(|&(_, n)| n > 0).collect();
+        self.pool_black = POOL_ORDER.into_iter().zip(black).filter(|&(_, n)| n > 0).collect();
     }
-    let mut pool = String::new();
-    for (i, &upper) in ORDER.iter().enumerate() {
-        let red = INIT[i].saturating_sub(on_board[i]);
-        if red > 0 {
-            pool.push(upper);
-            pool.push_str(&red.to_string());
+
+    // 池转 FEN 片段, 风格如 R2A2C2P5N2B2r2a2c2p5n2b2
+    pub fn pool_fen(&self) -> String {
+        let mut fen = String::new();
+        for (piece, count) in self.pool_red.iter() {
+            fen.push(*piece);
+            fen.push_str(&count.to_string());
         }
-    }
-    for (i, &upper) in ORDER.iter().enumerate() {
-        let black = INIT[i].saturating_sub(on_board[i + 6]);
-        if black > 0 {
-            pool.push(upper.to_ascii_lowercase());
-            pool.push_str(&black.to_string());
+        for (piece, count) in self.pool_black.iter() {
+            fen.push(piece.to_ascii_lowercase());
+            fen.push_str(&count.to_string());
         }
+        fen
     }
-    pool
+}
+
+// 从池中扣减 n 颗未知暗子: 优先扣剩余量最多的兵种(兵初始 5 颗概率最高, 同量按池顺序)
+fn deduct_pool(pool: &mut [usize; 6], n: usize) {
+    for _ in 0..n {
+        let mut best = 0;
+        for (i, &v) in pool.iter().enumerate() {
+            if v > pool[best] {
+                best = i;
+            }
+        }
+        if pool[best] == 0 {
+            break;
+        }
+        pool[best] -= 1;
+    }
+}
+
+// 取棋盘坐标上的棋子(pos 取前两字符, 形如 "b2"), 空格返回 None
+pub fn piece_at(board: [[char; 9]; 10], pos: &str) -> Option<char> {
+    let mut cs = pos.chars();
+    let x = (cs.next()? as usize).checked_sub(97)?;
+    let y = 57 - cs.next()? as usize;
+    if x >= 9 || y >= 10 {
+        return None;
+    }
+    let piece = board[y][x];
+    if piece == ' ' {
+        None
+    } else {
+        Some(piece)
+    }
 }
 
 // 棋盘转换FEN逻辑 (揭棋格式: board camp restPieces rule40 fullmove, 与 Pikafish jieqi StartFEN 一致)
+// 无账目时退化为减法反推(初始 - 盘上明子), 供演练等无吃子跟踪的场景
 pub fn board_fen(camp: &Camp, board: [[char; 9]; 10]) -> String {
+    let mut account = PieceAccount::default();
+    account.refresh_pool(board);
+    board_fen_account(camp, board, &account)
+}
+
+// 带子力账目的 FEN: 被吃暗子已从未翻池扣除, 修正引擎对暗子储备的高估
+// 注意: account 的池需先按当前盘面 refresh_pool, 否则池为空
+pub fn board_fen_account(camp: &Camp, board: [[char; 9]; 10], account: &PieceAccount) -> String {
     let mut fen = String::new();
     for row in &board {
         let mut empty = 0;
@@ -271,13 +359,13 @@ pub fn board_fen(camp: &Camp, board: [[char; 9]; 10]) -> String {
     fen.push(' ');
     fen.push(camp.to_char());
     fen.push(' ');
-    fen.push_str(&hidden_pool(board));
+    fen.push_str(&account.pool_fen());
     // 步数无历史, 用引擎 StartFEN 默认值
     fen.push_str(" 0 1");
     fen
 }
 
-// 检测棋盘是否合法 (揭棋: 明士无宫限, 明象无河限, 帅将仍限九宫)
+// 检测棋盘是否合法 (揭棋: 暗子可翻成任意子力, 位置不限; 仅帅/将仍限九宫)
 pub fn board_check(board: [[char; 9]; 10]) -> bool {
     let mut bk = 0;
     let mut ba = 0;
@@ -315,14 +403,6 @@ pub fn board_check(board: [[char; 9]; 10]) -> bool {
                 }
                 'p' => {
                     bp += 1;
-                    if y < 3 {
-                        warn!("黑方'兵'不在合法位置内, ({}行{}列)", y, x);
-                        return false;
-                    }
-                    if y < 5 && x % 2 == 1 {
-                        warn!("黑方'兵'不在合法位置内, ({}行{}列)", y, x);
-                        return false;
-                    }
                 }
                 'r' => {
                     br += 1;
@@ -348,14 +428,6 @@ pub fn board_check(board: [[char; 9]; 10]) -> bool {
                 }
                 'P' => {
                     rp += 1;
-                    if y > 6 {
-                        warn!("红方'兵'不在合法位置内, ({}行{}列)", y, x);
-                        return false;
-                    }
-                    if y > 4 && x % 2 == 1 {
-                        warn!("红方'兵'不在合法位置内, ({}行{}列)", y, x);
-                        return false;
-                    }
                 }
                 'R' => {
                     rr += 1;
@@ -900,6 +972,16 @@ mod tests {
         board[9][2] = 'A';
         board[9][8] = 'A';
         assert!(!board_check(board));
+
+        // 暗子翻开的兵/卒可出现在任意暗子位 (回归: 黑卒在行2列4曾被误判非法导致识别卡死)
+        let board = fen_to_board(
+            "xx1xkx1xx/9/1x2p4/x7x/2r1b4/P1B3A2/4R4/9/9/XXXXKXXXX b R1A1C2P4N2B1r1a2c2p4n2b1 0 1",
+        );
+        assert!(board_check(board));
+
+        let mut board = JIEQI_STARTPOS;
+        board[7][8] = 'P';
+        assert!(board_check(board));
     }
 
     #[test]
@@ -928,6 +1010,118 @@ mod tests {
         new[9][0] = ' ';
         let (_, state) = board_diff(JIEQI_STARTPOS, new);
         assert!(matches!(state, BoardChangeState::One));
+    }
+
+    #[test]
+    fn test_board_diff_capture() {
+        // 明吃明: 红车吃掉黑暗车, 被吃子类型明确
+        let mut old = JIEQI_STARTPOS;
+        old[9][0] = 'R';
+        old[0][0] = 'r';
+        let mut new = old;
+        new[9][0] = ' ';
+        new[0][0] = 'R';
+        let (changed, state) = board_diff(old, new);
+        assert!(matches!(state, BoardChangeState::Move));
+        assert_eq!(changed.captured, Some('r'));
+
+        // 明吃暗: 红车吃掉黑暗子, 类型未知记为 'x'
+        let mut old = JIEQI_STARTPOS;
+        old[9][0] = 'R';
+        let mut new = old;
+        new[9][0] = ' ';
+        new[0][0] = 'R';
+        let (changed, state) = board_diff(old, new);
+        assert!(matches!(state, BoardChangeState::Move));
+        assert_eq!(changed.captured, Some('x'));
+
+        // 暗吃暗+翻: 红暗子吃掉黑暗子并翻成马
+        let mut new = JIEQI_STARTPOS;
+        new[6][0] = ' ';
+        new[0][0] = 'N';
+        let (changed, state) = board_diff(JIEQI_STARTPOS, new);
+        assert!(matches!(state, BoardChangeState::Move));
+        assert_eq!(changed.captured, Some('x'));
+        assert_eq!(changed.piece, 'N');
+
+        // 暗子吃明子+翻: 红暗子吃掉黑暗车并翻开
+        let mut old = JIEQI_STARTPOS;
+        old[0][0] = 'r';
+        let mut new = old;
+        new[6][0] = ' ';
+        new[0][0] = 'C';
+        let (changed, state) = board_diff(old, new);
+        assert!(matches!(state, BoardChangeState::Move));
+        assert_eq!(changed.captured, Some('r'));
+
+        // 纯翻子与普通暗子移动不吃子
+        let mut new = JIEQI_STARTPOS;
+        new[9][0] = 'R';
+        let (changed, state) = board_diff(JIEQI_STARTPOS, new);
+        assert!(matches!(state, BoardChangeState::Flip));
+        assert_eq!(changed.captured, None);
+
+        let mut new = JIEQI_STARTPOS;
+        new[6][0] = ' ';
+        new[5][0] = 'X';
+        let (changed, state) = board_diff(JIEQI_STARTPOS, new);
+        assert!(matches!(state, BoardChangeState::Move));
+        assert_eq!(changed.captured, None);
+    }
+
+    #[test]
+    fn test_piece_account() {
+        // 无账目: 池与开局一致
+        let mut account = PieceAccount::default();
+        account.refresh_pool(JIEQI_STARTPOS);
+        assert_eq!(account.pool_fen(), "R2A2C2P5N2B2r2a2c2p5n2b2");
+
+        // 吃掉一颗黑暗子: 类型未知, 黑池按剩余最多的兵扣减
+        account.record('x');
+        assert_eq!(account.captured_black, Vec::<char>::new());
+        assert_eq!(account.black_hidden_lost, 1);
+        account.refresh_pool(JIEQI_STARTPOS);
+        assert_eq!(account.pool_fen(), "R2A2C2P5N2B2r2a2c2p4n2b2");
+
+        // 吃掉红明车: 记入红方被吃明子, 池不变(车已翻明不在池中)
+        account.record('R');
+        assert_eq!(account.captured_red, vec!['R']);
+        account.refresh_pool(JIEQI_STARTPOS);
+        assert_eq!(account.pool_fen(), "R2A2C2P5N2B2r2a2c2p4n2b2");
+
+        // 翻出红车后池中车辆递减, 黑池暗损保持
+        let mut board = JIEQI_STARTPOS;
+        board[9][0] = 'R';
+        account.refresh_pool(board);
+        assert_eq!(account.pool_fen(), "R1A2C2P5N2B2r2a2c2p4n2b2");
+
+        // 红暗损 3 颗: 全部按兵扣减(5->2)
+        let mut account = PieceAccount::default();
+        account.record('X');
+        account.record('X');
+        account.record('X');
+        account.refresh_pool(JIEQI_STARTPOS);
+        assert_eq!(account.pool_fen(), "R2A2C2P2N2B2r2a2c2p5n2b2");
+    }
+
+    #[test]
+    fn test_board_fen_account() {
+        // 带账目的 FEN: 黑暗子被吃一颗后黑池兵数递减
+        let mut account = PieceAccount::default();
+        account.record('x');
+        account.refresh_pool(JIEQI_STARTPOS);
+        let expected = "xxxxkxxxx/9/1x5x1/x1x1x1x1x/9/9/X1X1X1X1X/1X5X1/9/XXXXKXXXX w R2A2C2P5N2B2r2a2c2p4n2b2 0 1";
+        assert_eq!(board_fen_account(&Camp::Red, JIEQI_STARTPOS, &account), expected);
+    }
+
+    #[test]
+    fn test_piece_at() {
+        assert_eq!(piece_at(JIEQI_STARTPOS, "a3"), Some('X'));
+        assert_eq!(piece_at(JIEQI_STARTPOS, "a4"), None);
+        assert_eq!(piece_at(JIEQI_STARTPOS, "e9"), Some('k'));
+        // 带翻子后缀的坐标只取前两字符
+        assert_eq!(piece_at(JIEQI_STARTPOS, "a3R"), Some('X'));
+        assert_eq!(piece_at(JIEQI_STARTPOS, "z9"), None);
     }
 
     #[test]

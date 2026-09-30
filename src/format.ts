@@ -23,3 +23,21 @@ export function formatGap(gap: number | undefined): string {
     if (gap === 0) return "±0";
     return `-${gap}`;
 }
+
+// 棋子中文名(区分阵营: 红帅仕相兵, 黑将士象卒)
+const PIECE_NAMES: Record<string, string> = {
+    K: "帅", A: "仕", B: "相", N: "马", R: "车", C: "炮", P: "兵",
+    k: "将", a: "士", b: "象", n: "马", r: "车", c: "炮", p: "卒",
+};
+
+export function pieceName(piece: string): string {
+    return PIECE_NAMES[piece] ?? piece;
+}
+
+// 按棋子聚合计数: ["R","R","N"] => [["R",2],["N",1]]
+export function groupByPiece(pieces: string[] | undefined): [string, number][] {
+    if (!pieces?.length) return [];
+    const counts = new Map<string, number>();
+    for (const p of pieces) counts.set(p, (counts.get(p) ?? 0) + 1);
+    return [...counts];
+}

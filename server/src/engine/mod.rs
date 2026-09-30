@@ -41,6 +41,7 @@ pub struct QueryResult {
     pub board: Vec<crate::chess::Position>, // 分析时的局面, 供前端主线预演
     pub winrate: Option<usize>,  // 行棋方胜率(千分比, 仅引擎来源提供)
     pub deviation: Option<DeviationCost>, // 上一步非预期走子的代价
+    pub account: crate::chess::PieceAccount, // 子力账目: 双方被吃棋子与未翻暗子池
     pub source: String,          // 来源
     pub camp: char,              // 行棋方阵营 'w'/'b'
 }

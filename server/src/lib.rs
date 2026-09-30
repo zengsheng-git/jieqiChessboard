@@ -40,6 +40,18 @@ pub fn hint_version() -> u32 {
     HINT_LEVEL_VERSION.load(std::sync::atomic::Ordering::Relaxed)
 }
 
+fn engine_lib_path(app: &tauri::AppHandle) -> std::path::PathBuf {
+    let resolve = |rel: &str| app.path().resolve(rel, tauri::path::BaseDirectory::Resource).unwrap();
+    // 安装包内 tauri 会把 "../libs" 目标路径清洗成 "_up_/libs"（资源随安装包落在应用目录内）
+    for rel in ["_up_/libs/pikajieqi", "libs/pikajieqi", "../libs/pikajieqi", "../../libs/pikajieqi"] {
+        let path = resolve(rel);
+        if path.join("pikajieqi-windows.exe").exists() {
+            return path;
+        }
+    }
+    resolve("../libs/pikajieqi")
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -48,7 +60,7 @@ pub fn run() {
 
             let _ = SHARED_STATE.get_or_init(|| {
                 let config = config::Config::load(&app.path().config_dir().unwrap());
-                let lib_path = app.path().resolve("../libs/pikajieqi", tauri::path::BaseDirectory::Resource).unwrap();
+                let lib_path = engine_lib_path(app.handle());
                 let engine = Arc::new(Mutex::new(engine::Engine::new(&lib_path)
                     .unwrap_or_else(|e| panic!("引擎启动失败: {e}"))));
                 {
@@ -89,13 +101,22 @@ pub fn run() {
             practice::practice_reset,
             practice::practice_analyze,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = SHARED_STATE.get() {
+                    if let Ok(mut engine) = state.engine.lock() {
+                        engine.shutdown();
+                    }
+                }
+            }
+        });
 }
 
 #[tauri::command]
 fn reload_engine(app: tauri::AppHandle) {
-    let lib_path = app.path().resolve("../libs/pikajieqi", tauri::path::BaseDirectory::Resource).unwrap();
+    let lib_path = engine_lib_path(&app);
     let state = SHARED_STATE.get().unwrap();
     let engine_config = state.config.read().unwrap().engine;
     let mut engine = state.engine.lock().unwrap();

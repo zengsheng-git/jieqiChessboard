@@ -13,7 +13,7 @@
     "app": {
         "windows": [
             {
-                "title": "中国象棋dev2",
+                "title": "揭棋连线",
                 "width": 660,
                 "height": 580,
                 "resizable": false,

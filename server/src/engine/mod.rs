@@ -354,6 +354,10 @@ impl Engine {
         }
     }
 
+    pub fn shutdown(&mut self) {
+        self.kill_current();
+    }
+
     // 重建引擎子进程并应用完整配置
     pub fn reload(&mut self, libs: &Path, config: &EngineConfig) {
         self.kill_current();

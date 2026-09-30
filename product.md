@@ -1,5 +1,16 @@
 # 揭棋连线分析助手
 
+## 🧬 与 chessboard 的关系
+
+本项目由 [chessboard](https://github.com/zengsheng-git/chessboard)（中国象棋版，本项目前身）改造为揭棋版，完整沿用其工程架构：
+
+- **前后端骨架**：Vue 3 + TypeScript 前端、Tauri/Rust 后端、单仓布局与命令体系与 chessboard 一致
+- **打包架构**：基础 `tauri.conf.json` 保持干净（不含 resources），引擎二进制与 onnxruntime DLL 只声明在变体配置（`tauri.windows.cpu/gpu.conf.json`），统一由 `build:cpu` / `build:gpu` 打包；dev 模式直接使用仓库 `libs/` 下的真实文件，不复制大文件
+- **识别与引擎替换**：识别模型换为揭棋版 `jieqi.onnx`（取自 [JieqiBox](https://github.com/Velithia/JieqiBox)），引擎从 pikafish 换为揭棋分支 pikajieqi
+- **GPU DLL 来源**：`libs/windows-gpu/` 运行库取自 chessboard 仓库 Release（见下方注意事项）
+
+相对 chessboard 的两处增强：引擎路径多级探测（dev/release 两种资源布局通吃）；应用退出时显式关闭引擎子进程（Rust static 不执行 Drop，chessboard 同样存在引擎进程残留问题）。
+
 ## 🚀 快速上手
 
 ### 从源码运行/构建（开发者）
@@ -9,30 +20,27 @@
 ```powershell
 cd JieqiBox\jieqilink
 pnpm install
-pnpm tauri dev        # 首次会 panic 在引擎路径，没关系
-New-Item -ItemType Directory -Force server\target\debug\_up_ | Out-Null
-New-Item -ItemType Junction -Path server\target\debug\_up_\libs -Target libs
-Copy-Item libs\windows-cpu\*.dll server\target\debug\ -Force
-pnpm tauri dev        # 第二次成功
+Copy-Item libs\windows-cpu\*.dll server\target\debug\ -Force   # 仅首次 / cargo clean 后需要
+pnpm tauri dev
 ```
 
-> dev 模式首次运行 panic 是因为 Tauri 把资源路径中的 `..` 映射为 `_up_` 目录，需要在 `target\debug\` 下建立 junction 指向 `libs`。正式打包不受影响。
+> dev 模式引擎直接使用仓库 `libs\pikajieqi\` 下的真实文件（应用启动时多级探测资源路径，命中仓库目录），无需建立 junction、无需复制引擎文件。
 >
 > `libs\` 已就位揭棋识别模型 `jieqi.onnx`（34 类，编译期 `include_bytes!` 内嵌）与揭棋版皮卡鱼引擎（`libs\pikajieqi\`，二进制 `pikajieqi-windows.exe` + 权重 `pikajieqi.nnue`），无需额外下载。
 >
 > `libs\windows-cpu\` 与 `libs\windows-gpu\` 是微软 ONNX Runtime 运行库（供识别模型推理加载 `jieqi.onnx` 用），并非棋类引擎文件，勿与 `libs\pikajieqi\` 引擎混淆。
 >
-> 复制 CPU 版 DLL 是因为 ort 以 `load-dynamic` 方式按 exe 目录加载 `onnxruntime.dll`；dev 模式不会自动放置 DLL，若 exe 目录没有，Windows 会继续搜索 system32，可能命中其他软件遗留的旧版 DLL（如 1.10），导致 ort 版本校验 panic（要求 ≥1.20）。
+> 复制 CPU 版 DLL 是因为 ort 以 `load-dynamic` 方式按 exe 目录加载 `onnxruntime.dll`；dev 模式不走变体打包配置、不会自动放置 DLL，若 exe 目录没有，Windows 会继续搜索 system32，可能命中其他软件遗留的旧版 DLL（如 1.10），导致 ort 版本校验 panic（要求 ≥1.20）。缺 DLL 不影响应用启动，但开始监听（首次推理）时会闪退。
 
 dev 模式启用 GPU 推理（覆盖 DLL 法）：
 
 ```powershell
 # 一次性：把 GPU 版 DLL 复制到 target\debug\（覆盖 CPU 版同名文件）
-Copy-Item F:\w\template\JieqiBox\jieqilink\libs\windows-gpu\* F:\w\template\JieqiBox\jieqilink\server\target\debug\ -Force
+Copy-Item libs\windows-gpu\* server\target\debug\ -Force
 # 之后每次启动都用 --features gpu
 pnpm tauri dev --features gpu
 # 切回 CPU
-Copy-Item F:\w\template\JieqiBox\jieqilink\libs\windows-cpu\*.dll F:\w\template\JieqiBox\jieqilink\server\target\debug\ -Force
+Copy-Item libs\windows-cpu\*.dll server\target\debug\ -Force
 pnpm tauri dev
 ```
 
@@ -45,7 +53,7 @@ pnpm build:cpu    # CPU 版（仓库自带运行时 DLL）
 pnpm build:gpu    # GPU 版（GPU DLL 取自 chessboard 仓库 Release 的 windows-gpu.zip，解压到 libs\windows-gpu\）
 ```
 
-产物位置：`server\target\release\bundle\msi\jieqilink_0.1.2_x64_en-US.msi`。
+产物位置：`server\target\release\bundle\msi\`（如 CPU 版 `jieqilink_0.1.6_x64_zh-CN.msi`，文件名中的版本号取自对应变体配置，安装器界面为中文）。
 
 ## ⚙️ 引擎配置说明
 
@@ -101,7 +109,7 @@ pnpm build:gpu    # GPU 版（GPU DLL 取自 chessboard 仓库 Release 的 windo
 
 - **CPU 与 GPU 版本互斥**：MSI 文件名完全相同，后打的会覆盖前者，打包后请立即按内容加 `-CPU` / `-GPU` 后缀（GPU 版约 350MB+，CPU 版约 75MB）。
 - **GPU DLL 仓库不含**：从 [v0.1.2-gpu-dlls Release](https://github.com/zengsheng-git/chessboard/releases/tag/v0.1.2-gpu-dlls) 下载 `windows-gpu.zip`（196MB），解压到 `libs/windows-gpu/` 后才能 `pnpm build:gpu`（`onnxruntime_providers_cuda.dll` 320MB 超过 GitHub 单文件 100MB 限制）。
-- **dev 模式 `_up_` junction 与 DLL**：`cargo clean` 或删除 `target/` 后需要重新建立 junction 并重新复制 `libs\windows-cpu\*.dll` 到 `target\debug\`，否则引擎启动会 panic。
+- **dev 模式 DLL 复制**：`cargo clean` 或删除 `target/` 后需重新复制 `libs\windows-cpu\*.dll` 到 `target\debug\`（引擎无需处理，应用会多级探测并直接使用仓库 `libs\pikajieqi`）；缺 DLL 不影响应用启动，但开始监听时会因 onnxruntime 加载失败而闪退。
 - **交替打包 CPU/GPU 前先清理 `target\release\`**：`tauri build` 会把 `bundle.resources` 声明的 DLL 复制到 `server\target\release\`（exe 旁），打包时还会把该目录里**所有** DLL 扫进安装包。GPU 打包留下的 `onnxruntime_providers_cuda.dll`、`onnxruntime_providers_tensorrt.dll` 会让之后打出的 CPU 包也带上 300MB+ 的 CUDA 文件（表现为 CPU 包从 75MB 变成 266MB）。打 CPU 包前先删除 `server\target\release\onnxruntime*.dll`（打包过程会自动放入需要的）。
 - **WebView2 与沙箱**：WebView2 需正常访问 `AppData\Local\<identifier>\EBWebView\` 目录，在某些受限终端（如 sandbox）下 webview 会启动失败导致窗口白屏，需在普通终端运行。
 - **揭棋规则差异**：暗子（棋盘上的 X/x）不能移动，需先翻开；翻开的士/象不受九宫与过河限制；中文记谱中暗子按起始位名义兵种记录，翻开后实际兵种以括号后缀补充（如 `车九进一(翻车)`）。

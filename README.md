@@ -55,7 +55,8 @@
 ```powershell
 cd JieqiBox\jieqilink
 pnpm install
-pnpm tauri dev        # 首次会 panic，按 product.md 建立 junction 并复制 DLL 后重试
+Copy-Item libs\windows-cpu\*.dll server\target\debug\ -Force   # 仅首次 / cargo clean 后需要
+pnpm tauri dev        # 引擎直接使用仓库 libs\pikajieqi，无需 junction
 pnpm build:cpu        # 打包 CPU 版
 pnpm build:gpu        # 打包 GPU 版（需先按 product.md 下载 GPU DLL）
 ```

@@ -1,3 +1,4 @@
+use std::sync::PoisonError;
 use std::thread;
 use std::time::Duration;
 
@@ -76,7 +77,7 @@ impl AnalysisContext {
     // 检查是否需要终止分析线程
     fn should_stop(&self) -> bool {
         let state = SHARED_STATE.get().unwrap();
-        state.listen_thread.lock().unwrap().is_none()
+        state.listen_thread.lock().map(|slot| slot.is_none()).unwrap_or(true)
     }
 
     // 确认棋盘状态是否稳定
@@ -466,7 +467,10 @@ pub async fn start_listen(app: AppHandle, target: Window) -> Result<(), String> 
     {
         // 先检查再占用, 整个过程持锁防止并发双开
         let shared_state = SHARED_STATE.get().unwrap();
-        let mut listen_slot = shared_state.listen_thread.lock().unwrap();
+        let mut listen_slot = shared_state
+            .listen_thread
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
         if listen_slot.is_some() {
             error!("current listen thread is running, please stop it first");
             return Err("已经在监听中".to_string());
@@ -483,7 +487,10 @@ pub async fn start_listen(app: AppHandle, target: Window) -> Result<(), String> 
         let image_h = image.height();
         let image_w = image.width();
 
-        let detections = predict(image.clone()).unwrap();
+        let detections = match predict(image.clone()) {
+            Ok(detections) => detections,
+            Err(err) => return Err(format!("棋子识别失败: {err}")),
+        };
 
         match common::detections_bound(image_w, image_h, &detections) {
             Ok((x, y, w, h)) => {

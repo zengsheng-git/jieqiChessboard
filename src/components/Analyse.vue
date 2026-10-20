@@ -3,17 +3,9 @@ import { listen } from '@tauri-apps/api/event';
 import { NCard, NFlex, NTag, NText } from 'naive-ui';
 import { computed, ref } from 'vue';
 
-import { evalText, formatGap, groupByPiece, pieceName, winrateText as formatWinrate } from '../format';
-
-// 子力账目: 双方被吃棋子与未翻暗子池
-interface PieceAccount {
-    captured_red: string[],   // 红方被吃的明子
-    captured_black: string[], // 黑方被吃的明子
-    red_hidden_lost: number,  // 红方未翻即被吃的暗子数(类型未知)
-    black_hidden_lost: number,
-    pool_red: [string, number][],   // 红方未翻暗子池(已扣除暗损)
-    pool_black: [string, number][],
-}
+import type { ArrowHint } from '../arrows';
+import { evalText, formatGap, winrateText as formatWinrate } from '../format';
+import { mirrorStore } from '../store';
 
 interface Analyse {
     depth: number,   // 深度
@@ -29,7 +21,6 @@ interface Analyse {
     board: { piece: string; pos: string }[], // 分析时的局面, 供主线预演
     source: string,  // 来源
     camp: string,    // 行棋方阵营 'w'/'b'
-    account: PieceAccount, // 子力账目: 双方被吃棋子与未翻暗子池
 }
 
 
@@ -37,7 +28,6 @@ const followUps = ref<string[]>([])
 const pvs = ref<string[]>([])
 const altIccs = ref<string[]>([])
 const deviation = ref<{ camp: string; loss: number } | null>(null)
-const account = ref<PieceAccount | null>(null)
 const winrate = ref<number | null>(null)
 const lastScore = ref(0)
 const analysisBoard = ref<{ piece: string; pos: string }[]>([])
@@ -70,7 +60,6 @@ listen('analyse', async (event) => {
     altIccs.value = data.alternatives ?? [];
     winrate.value = data.winrate ?? null;
     deviation.value = data.deviation ?? null;
-    account.value = data.account ?? null;
     analysisBoard.value = data.board ?? [];
     // 新分析到达时旧主线已过期, 若正处预演态则强制还原, 避免悬停元素被重渲染后 mouseleave 丢失导致预演卡死
     if (previewActive) restoreBoard();
@@ -85,21 +74,18 @@ listen('analyse', async (event) => {
     best.value.evalText = evalResult.text;
     best.value.evalType = evalResult.type;
 
-    // 设置选择框：我方用 b-select（红色），对手用 r-select（蓝色）
-    const selectClass = isMine ? "b-select" : "r-select";
-    let pv = data.pvs[0];
-    let from = pv.substring(0, 2);
-    let to = pv.substring(2, 4)
-    document.getElementById(from)?.classList.add(selectClass);
-    document.getElementById(to)?.classList.add(selectClass);
-
-    // 次优候选着法：起点与落点都标记
+    // 招法提示箭头: 最优招法按行棋方着色(我方红/对方蓝), 次优为紫色细箭头
+    const arrows: ArrowHint[] = [];
+    const pv = data.pvs[0];
+    if (pv && pv.length >= 4) {
+        arrows.push({ from: pv.substring(0, 2), to: pv.substring(2, 4), kind: isMine ? "red" : "blue" });
+    }
     for (const alt of data.alternatives ?? []) {
         if (alt.length >= 4) {
-            document.getElementById(alt.substring(0, 2))?.classList.add("alt-select");
-            document.getElementById(alt.substring(2, 4))?.classList.add("alt-select");
+            arrows.push({ from: alt.substring(0, 2), to: alt.substring(2, 4), kind: "alt" });
         }
     }
+    mirrorStore.arrows = arrows;
 })
 
 
@@ -133,33 +119,6 @@ const deviationText = computed(() => {
     return loss > 0
         ? { text: `${who}偏离提示, 亏 ${loss} 分`, type }
         : { text: `${who}偏离提示, 反赚 ${-loss} 分`, type };
-});
-
-// 徽章数据: 兵种名 + 聚合计数
-function toBadges(list: [string, number][]) {
-    return list.map(([piece, count]) => ({ piece, count, name: pieceName(piece) }));
-}
-
-// 子力账目展示: 双方被吃明子/暗损/未翻池
-const accountRows = computed(() => {
-    const acc = account.value;
-    if (!acc) return [];
-    return [
-        {
-            camp: "red",
-            label: "红方",
-            hiddenLost: acc.red_hidden_lost,
-            captured: toBadges(groupByPiece(acc.captured_red)),
-            pool: toBadges(acc.pool_red),
-        },
-        {
-            camp: "black",
-            label: "黑方",
-            hiddenLost: acc.black_hidden_lost,
-            captured: toBadges(groupByPiece(acc.captured_black)),
-            pool: toBadges(acc.pool_black),
-        },
-    ];
 });
 
 // ===== 主线预演: 通知棋盘组件从分析时局面重放着法, 移开按最新实时局面还原 =====
@@ -211,29 +170,6 @@ function previewAlt(index: number) {
             <n-text v-if="winrateText" depth="3">{{ winrateText }}</n-text>
         </n-flex>
         <n-text v-if="deviationText" :type="deviationText.type" class="notes">{{ deviationText.text }}</n-text>
-        <div v-if="accountRows.length" class="account" title="暗损 = 未翻开即被吃掉的暗子, 兵种未知">
-            <div v-for="row in accountRows" :key="row.camp" class="account-side">
-                <div class="side-title">
-                    <span class="camp-dot" :class="row.camp"></span>
-                    <span class="side-name">{{ row.label }}</span>
-                    <span v-if="row.hiddenLost" class="hidden-lost">暗损 ×{{ row.hiddenLost }}</span>
-                </div>
-                <div class="kv">
-                    <span class="k">被吃</span>
-                    <span v-if="row.captured.length" class="badges">
-                        <span v-for="b in row.captured" :key="b.piece" class="badge" :class="row.camp">{{ b.name }}<i v-if="b.count > 1">{{ b.count }}</i></span>
-                    </span>
-                    <span v-else class="none">无</span>
-                </div>
-                <div class="kv">
-                    <span class="k">未翻</span>
-                    <span v-if="row.pool.length" class="badges">
-                        <span v-for="b in row.pool" :key="b.piece" class="badge dashed" :class="row.camp">{{ b.name }}<i v-if="b.count > 1">{{ b.count }}</i></span>
-                    </span>
-                    <span v-else class="none">无</span>
-                </div>
-            </div>
-        </div>
         <div v-if="followUps.length" class="follow-ups">
             <n-text depth="3">后续：</n-text>
             <div
@@ -264,115 +200,6 @@ function previewAlt(index: number) {
 <style scoped>
 .notes {
     margin-top: 6px;
-}
-
-.account {
-    margin-top: 6px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-.account-side {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    padding-bottom: 3px;
-    border-bottom: 1px solid rgba(128, 128, 128, .15);
-}
-
-.account-side:last-child {
-    border-bottom: none;
-    padding-bottom: 0;
-}
-
-.side-title {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    font-weight: 600;
-}
-
-.camp-dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    flex: none;
-}
-
-.camp-dot.red {
-    background: #c94f42;
-}
-
-.camp-dot.black {
-    background: #555;
-}
-
-.hidden-lost {
-    margin-left: auto;
-    font-size: 11px;
-    font-weight: 400;
-    color: rgba(128, 128, 128, .9);
-}
-
-.kv {
-    display: flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 12px;
-    min-width: 0;
-}
-
-.kv .k {
-    flex: none;
-    color: rgba(128, 128, 128, .9);
-}
-
-.badges {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 3px;
-}
-
-.badge {
-    display: inline-flex;
-    align-items: baseline;
-    justify-content: center;
-    min-width: 17px;
-    height: 18px;
-    padding: 0 3px;
-    border-radius: 4px;
-    font-size: 11px;
-    line-height: 18px;
-    box-sizing: border-box;
-}
-
-.badge i {
-    font-style: normal;
-    font-size: 9px;
-    margin-left: 1px;
-    opacity: .75;
-}
-
-.badge.red {
-    color: #c0392b;
-    background: rgba(192, 57, 43, .12);
-}
-
-.badge.black {
-    color: #444;
-    background: rgba(85, 85, 85, .14);
-}
-
-.badge.dashed {
-    background: transparent;
-    border: 1px dashed rgba(128, 128, 128, .55);
-    line-height: 16px;
-}
-
-.none {
-    color: rgba(128, 128, 128, .6);
 }
 
 .follow-ups {
@@ -421,12 +248,12 @@ function previewAlt(index: number) {
 
 .textlog {
     width: 260px;
-    height: 470px;
+    height: 440px;
     left: 400px;
     top: 0px;
 }
 
-/* 内容区内部滚动: 账目/后续/次优总高可变, 不允许溢出卡片把窗口撑出滚动条 */
+/* 内容区内部滚动: 后续/次优总高可变, 不允许溢出卡片把窗口撑出滚动条 */
 .textlog :deep(.n-card__content) {
     min-height: 0;
     overflow-y: auto;

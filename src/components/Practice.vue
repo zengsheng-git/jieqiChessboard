@@ -5,6 +5,8 @@ import { NButton, NCard, NFlex, NTag, NText } from "naive-ui";
 
 import { mirrorStore } from "../store";
 import { evalText, formatGap, winrateText } from "../format";
+import { computeArrows } from "../arrows";
+import type { ArrowHint } from "../arrows";
 import "../assets/css/chessboard.css";
 
 interface Position {
@@ -82,31 +84,29 @@ function cellPiece(id: string): Element | undefined | null {
     return document.getElementById("practiceboard")?.querySelector(`[id="${id}"]`)?.firstElementChild;
 }
 
-function cellWrap(id: string): Element | undefined | null {
-    return document.getElementById("practiceboard")?.querySelector(`[id="${id}"]`);
-}
+// 演练盘的招法提示箭头, 视角翻转时随镜像重排自动重算
+const hintArrows = ref<ArrowHint[]>([]);
+const arrowShapes = computed(() => computeArrows(hintArrows.value, mirrorStore.mirror));
 
-// 清除推荐/次优招法的坐标高亮
+// 清除推荐/次优招法的提示箭头
 function clearHintHighlight() {
-    document.getElementById("practiceboard")
-        ?.querySelectorAll(".b-select, .r-select, .alt-select")
-        .forEach((el) => el.classList.remove("b-select", "r-select", "alt-select"));
+    hintArrows.value = [];
 }
 
-// 在演练盘上标出最优(红框)与次优(紫框)招法的起止坐标
+// 在演练盘上以箭头标出最优(按行棋方红/蓝)与次优(紫)招法
 function highlightHint() {
     clearHintHighlight();
+    const arrows: ArrowHint[] = [];
     const pv = pvs.value[0];
     if (pv && pv.length >= 4) {
-        cellWrap(pv.substring(0, 2))?.classList.add("b-select");
-        cellWrap(pv.substring(2, 4))?.classList.add("b-select");
+        arrows.push({ from: pv.substring(0, 2), to: pv.substring(2, 4), kind: camp.value === "w" ? "red" : "blue" });
     }
     for (const alt of altIccs.value) {
         if (alt.length >= 4) {
-            cellWrap(alt.substring(0, 2))?.classList.add("alt-select");
-            cellWrap(alt.substring(2, 4))?.classList.add("alt-select");
+            arrows.push({ from: alt.substring(0, 2), to: alt.substring(2, 4), kind: "alt" });
         }
     }
+    hintArrows.value = arrows;
 }
 
 function renderBoard(map: Record<string, string>) {
@@ -368,6 +368,11 @@ function previewAlt(index: number) {
             >
                 <span class="piece"></span>
             </div>
+            <svg class="hint-arrows" viewBox="0 0 380 420">
+                <line v-for="(a, i) in arrowShapes" :key="i" :x1="a.x1" :y1="a.y1" :x2="a.x2" :y2="a.y2"
+                    :stroke="a.color" :stroke-width="a.width" stroke-linecap="round" />
+                <polygon v-for="(a, i) in arrowShapes" :key="'h' + i" :points="a.head" :fill="a.color" />
+            </svg>
         </div>
 
         <n-card title="局势推演" :bordered="false" class="practice-panel">

@@ -237,11 +237,9 @@ pub fn board_move(board: [[char; 9]; 10], iccs: &str) -> [[char; 9]; 10] {
 const POOL_ORDER: [char; 6] = ['R', 'A', 'C', 'P', 'N', 'B'];
 const POOL_INIT: [usize; 6] = [2, 2, 2, 5, 2, 2];
 
-// 子力账目: 跟踪双方被吃棋子与未翻开的暗子池
-#[derive(Debug, Default, Clone, Serialize, PartialEq, Eq)]
+// 暗子账目: 跟踪未翻即被吃的暗子数, 生成引擎 FEN 时从未翻池扣除(修正引擎对暗子储备的高估)
+#[derive(Debug, Default, Clone)]
 pub struct PieceAccount {
-    pub captured_red: Vec<char>,   // 红方被吃的明子
-    pub captured_black: Vec<char>, // 黑方被吃的明子
     pub red_hidden_lost: usize,    // 红方未翻即被吃的暗子数(类型未知)
     pub black_hidden_lost: usize,  // 黑方未翻即被吃的暗子数(类型未知)
     pub pool_red: Vec<(char, usize)>,   // 红方未翻暗子池(已扣除暗损)
@@ -249,13 +247,12 @@ pub struct PieceAccount {
 }
 
 impl PieceAccount {
-    // 记录一颗被吃子: X/x 为未翻暗子(类型未知), 其余按明子记账
+    // 记录一颗被吃子: 仅 X/x 暗子参与记账(从未翻池扣减), 明子被吃不影响池
     pub fn record(&mut self, captured: char) {
         match captured {
             'X' => self.red_hidden_lost += 1,
             'x' => self.black_hidden_lost += 1,
-            p if p.is_ascii_uppercase() => self.captured_red.push(p),
-            p => self.captured_black.push(p),
+            _ => {}
         }
     }
 
@@ -333,7 +330,7 @@ pub fn board_fen(camp: &Camp, board: [[char; 9]; 10]) -> String {
     board_fen_account(camp, board, &account)
 }
 
-// 带子力账目的 FEN: 被吃暗子已从未翻池扣除, 修正引擎对暗子储备的高估
+// 带暗子账目的 FEN: 被吃暗子已从未翻池扣除, 修正引擎对暗子储备的高估
 // 注意: account 的池需先按当前盘面 refresh_pool, 否则池为空
 pub fn board_fen_account(camp: &Camp, board: [[char; 9]; 10], account: &PieceAccount) -> String {
     let mut fen = String::new();
@@ -1078,14 +1075,12 @@ mod tests {
 
         // 吃掉一颗黑暗子: 类型未知, 黑池按剩余最多的兵扣减
         account.record('x');
-        assert_eq!(account.captured_black, Vec::<char>::new());
         assert_eq!(account.black_hidden_lost, 1);
         account.refresh_pool(JIEQI_STARTPOS);
         assert_eq!(account.pool_fen(), "R2A2C2P5N2B2r2a2c2p4n2b2");
 
-        // 吃掉红明车: 记入红方被吃明子, 池不变(车已翻明不在池中)
+        // 吃掉红明车: 明子不记账, 池不变(车已翻明不在池中)
         account.record('R');
-        assert_eq!(account.captured_red, vec!['R']);
         account.refresh_pool(JIEQI_STARTPOS);
         assert_eq!(account.pool_fen(), "R2A2C2P5N2B2r2a2c2p4n2b2");
 

@@ -3,6 +3,7 @@
 import { emit, listen } from "@tauri-apps/api/event";
 import { computed, onMounted, ref } from "vue";
 
+import { computeArrows } from "../arrows";
 import { mirrorStore } from "../store";
 import "../assets/css/chessboard.css";
 
@@ -67,10 +68,12 @@ for (let y = 9; y >= 0; y--) {
     }
 }
 
+// 招法提示箭头(优选/次优), 由分析面板写入 store, 视角翻转时随镜像重排自动重算
+const arrowShapes = computed(() => computeArrows(mirrorStore.arrows, mirrorStore.mirror));
+
 function clearHighlights() {
-    document.querySelectorAll(".b-select, .r-select, .alt-select").forEach(element => {
-        element.classList.remove("b-select", "r-select", "alt-select")
-    });
+    // 走子/局面重同步后旧提示箭头已失效, 直接清空
+    mirrorStore.arrows = [];
 }
 
 function renderBoard(map: Record<string, string>) {
@@ -182,5 +185,11 @@ listen('analyse', async (event) => {
     <div id="chessboard">
         <div v-for="(item, _) in wrappedItems" :key="item.id" :id="item.id" class="piece-wrap"><span
                 class="piece"></span></div>
+        <svg class="hint-arrows" viewBox="0 0 380 420">
+            <!-- 先画全部箭杆再画全部箭头, 箭头交叉时保持头部在最上层 -->
+            <line v-for="(a, i) in arrowShapes" :key="i" :x1="a.x1" :y1="a.y1" :x2="a.x2" :y2="a.y2" :stroke="a.color"
+                :stroke-width="a.width" stroke-linecap="round" />
+            <polygon v-for="(a, i) in arrowShapes" :key="'h' + i" :points="a.head" :fill="a.color" />
+        </svg>
     </div>
 </template>

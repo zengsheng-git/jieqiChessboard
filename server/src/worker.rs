@@ -52,7 +52,7 @@ struct AnalysisContext {
     pending_deviation: Option<chess::Camp>, // 刚发生非预期走子的一方, 下次分析时计算代价
     invalid_change_count: usize,
     last_hint_version: u32, // 上次分析时的提示档位版本号, 用于检测切档后立即重算
-    account: chess::PieceAccount, // 子力账目: 双方被吃棋子与未翻暗子池
+    account: chess::PieceAccount, // 暗子账目: 未翻即被吃的暗子计数, 生成引擎 FEN 时从未翻池扣除
 }
 
 unsafe impl Send for AnalysisContext {}
@@ -117,7 +117,7 @@ impl AnalysisContext {
 
         let result = result.unwrap();
         let score = result.score;
-        let (expect_move, expect_board) = analyse(&self.app, result, board, camp, prev, self.account.clone())?;
+        let (expect_move, expect_board) = analyse(&self.app, result, board, camp, prev)?;
         // 记录本次预期评分与行棋方, 供下一步偏离对比
         self.expect_score = score;
         self.expect_camp = camp.clone();
@@ -201,7 +201,6 @@ pub fn get_board(image: ImageBuffer<Rgba<u8>, Vec<u8>>) -> Option<(chess::Camp, 
 // 将引擎结果整理为完整展示数据(中文主线/次优/局面/偏离等), 镜像与推演共用
 pub fn prepare_result(
     mut result: QueryResult, board: [[char; 9]; 10], camp: &chess::Camp, prev: Option<(chess::Camp, isize)>,
-    mut account: chess::PieceAccount,
 ) -> Option<(QueryResult, chess::Changed, [[char; 9]; 10])> {
     // 引擎可能返回空着法, 跳过本次展示, 避免监听线程 panic
     let Some(best_pv) = result.pvs.first().cloned() else {
@@ -234,14 +233,11 @@ pub fn prepare_result(
     }
     // 标记本次分析的行棋方阵营
     result.camp = camp.to_char();
-    // 携带子力账目(按当前盘面刷新未翻池, 保证与局面一致)
-    account.refresh_pool(board);
-    result.account = account;
     Some((result, expect_move, expect_board))
 }
 
-pub fn analyse(app: &AppHandle, result: QueryResult, board: [[char; 9]; 10], camp: &chess::Camp, prev: Option<(chess::Camp, isize)>, account: chess::PieceAccount) -> Option<(chess::Changed, [[char; 9]; 10])> {
-    let (result, expect_move, expect_board) = prepare_result(result, board, camp, prev, account)?;
+pub fn analyse(app: &AppHandle, result: QueryResult, board: [[char; 9]; 10], camp: &chess::Camp, prev: Option<(chess::Camp, isize)>) -> Option<(chess::Changed, [[char; 9]; 10])> {
+    let (result, expect_move, expect_board) = prepare_result(result, board, camp, prev)?;
     // 把结果发送给前端
     info!("分析结果 {:?}", result);
     app.emit("analyse", result).unwrap();

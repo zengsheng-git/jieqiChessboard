@@ -79,21 +79,16 @@
     z-index: 1;
 }
 
-.b-select {
-    box-shadow: 0 0 0 3px #e74c3c;
-    background-color: rgba(231, 76, 60, 0.25);
-    z-index: 2;
-}
-
-.r-select {
-    box-shadow: 0 0 0 3px #3498db;
-    background-color: rgba(52, 152, 219, 0.25);
-    z-index: 2;
-}
-
-.alt-select {
-    box-shadow: 0 0 0 2px #9b59b6;
-    z-index: 2;
+/* 招法提示箭头层: 覆盖整块棋盘(含内边距), 叠在棋子上方且不拦截鼠标 */
+.hint-arrows {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 380px;
+    height: 420px;
+    pointer-events: none;
+    z-index: 3;
+    opacity: 0.85;
 }
 
 /* 推演盘: 选中棋子与合法落点 */
